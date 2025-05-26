@@ -30,21 +30,11 @@ struct SurfaceSize {
 pub struct State {
     // pub(crate) wl_seat: Option<wl_seat::WlSeat>,
     // pub(crate) qh: QueueHandle<State>,
-    // pub(crate) dbus_handlers: CallbackListHandle,
-    // pub(crate) tx: mpsc::Sender<Request>,
-    // pub(crate) lua: LuaHandle,
-    // pub(crate) base: XdgWmBase,
     wl_shm: Option<wl_shm::WlShm>,
     surface_size: Option<SurfaceSize>,
     accepted_formats: Vec<WEnum<Format>>,
-}
-
-lazy_static::lazy_static! {
-    pub static ref COMPOSITOR: std::sync::Mutex<Option<wl_compositor::WlCompositor>> = std::sync::Mutex::new(None);
-    pub static ref WL_SURFACE: std::sync::Mutex<Option<wl_surface::WlSurface>> = std::sync::Mutex::new(None);
-    pub static ref XDG_WM_BASE: std::sync::Mutex<Option<xdg_wm_base::XdgWmBase>> = std::sync::Mutex::new(None);
-    pub static ref XDG_SURFACE: std::sync::Mutex<Option<xdg_surface::XdgSurface>> = std::sync::Mutex::new(None);
-    pub static ref XDG_TOP: std::sync::Mutex<Option<xdg_toplevel::XdgToplevel>> = std::sync::Mutex::new(None);
+    compositor: Option<wl_compositor::WlCompositor>,
+    base: Option<xdg_wm_base::XdgWmBase>,
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
@@ -77,7 +67,7 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
 
 impl Dispatch<WlRegistry, ()> for State {
     fn event(
-        state: &mut Self,
+        data: &mut Self,
         registry: &WlRegistry,
         event: Event,
         _: &(),
@@ -96,49 +86,18 @@ impl Dispatch<WlRegistry, ()> for State {
             // info!("[{}] {} (v{})", name, interface, version);
             match &interface[..] {
                 "wl_compositor" => {
-                    let compositor =
-                        registry.bind::<wl_compositor::WlCompositor, _, _>(name, 1, qh, ());
-
-                    let surface = compositor.create_surface(qh, ());
-                    *WL_SURFACE.lock().unwrap() = Some(surface);
-                    info!("Created surface!");
-
-                    *COMPOSITOR.lock().unwrap() = Some(compositor);
+                    data.compositor =
+                        Some(registry.bind::<wl_compositor::WlCompositor, _, _>(name, 1, qh, ()));
+                    info!("Bound compositor");
                 }
                 "wl_shm" => {
-                    state.wl_shm = Some(registry.bind(name, version, qh, ()));
+                    data.wl_shm = Some(registry.bind(name, version, qh, ()));
                     info!("Bound WlShm");
                 }
                 "xdg_wm_base" => {
-                    let base = registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, 1, qh, ());
-
-                    let surface = WL_SURFACE.lock().unwrap();
-                    if let Some(surface) = surface.as_ref() {
-                        let xdg_surface = base.get_xdg_surface(surface, qh, ());
-                        info!("Created xdg_surface!");
-
-                        let xdg_top = xdg_surface.get_toplevel(qh, ());
-                        info!("Created xdg_top!");
-                        xdg_top.set_title("Title".to_string());
-                        xdg_top.set_app_id("Breaktimer ID".to_string());
-                        xdg_top.set_fullscreen(None);
-
-                        *XDG_TOP.lock().unwrap() = Some(xdg_top);
-                        *XDG_SURFACE.lock().unwrap() = Some(xdg_surface);
-
-                        surface.commit();
-                        info!("Performed initial commit on surface!");
-                    } else {
-                        error!(
-                            "Unable to create an xdg_surface, because no wl_surface was created before this!"
-                        );
-                    }
-
-                    *XDG_WM_BASE.lock().unwrap() = Some(base);
-                }
-                "wl_output" => {
-                    // let wl_output = registry.bind::<wl_output::WlOutput, _, _>(name, 1, qh, ());
-                    // TODO: is bind to output relevant?
+                    data.base =
+                        Some(registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, 1, qh, ()));
+                    info!("Bound base");
                 }
                 _ => {}
             }
@@ -240,38 +199,33 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
 impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     fn event(
         state: &mut Self,
-        _: &xdg_surface::XdgSurface,
+        xdg_surface: &xdg_surface::XdgSurface,
         event: xdg_surface::Event,
         _: &(),
         _: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        let xdg_surface = XDG_SURFACE.lock().unwrap();
-        if let Some(xdg_surface) = xdg_surface.as_ref() {
-            match event {
-                xdg_surface::Event::Configure { serial } => {
-                    // using the provided XdgSurface handle seems like it might be able to create racing
-                    // conditions
+        match event {
+            xdg_surface::Event::Configure { serial } => {
+                // using the provided XdgSurface handle seems like it might be able to create racing
+                // conditions
 
-                    // TODO: since this event is handled after the others, the configuring should
-                    // already be done?
-                    xdg_surface.ack_configure(serial);
-                    info!("Acked configure event");
+                // TODO: since this event is handled after the others, the configuring should
+                // already be done?
+                xdg_surface.ack_configure(serial);
+                info!("Acked configure event");
 
-                    if state.accepted_formats.len() > 0 {
-                        // let buffer: wl_buffer::WlBuffer = TODO: attach buffer
-                        // TODO: commit? at least normally after a configure event a commit is needed
-                    } else {
-                        error!("The compositor did not advertise any buffer formats it accepts.")
-                    }
+                if state.accepted_formats.len() > 0 {
+                    // let buffer: wl_buffer::WlBuffer = TODO: attach buffer
+                    // TODO: commit? at least normally after a configure event a commit is needed
+                } else {
+                    error!("The compositor did not advertise any buffer formats it accepts.")
                 }
-                _ => {
-                    error!("Received an xdg-surface event {event:?} that isn't handled yet!");
-                }
-            };
-        } else {
-            error!("Received an event for a non-existent xdg-surface (or lost the surface...)");
-        }
+            }
+            _ => {
+                error!("Received an xdg-surface event {event:?} that isn't handled yet!");
+            }
+        };
     }
 }
 
@@ -303,13 +257,16 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 fn show_popup(
     event_queue: &mut EventQueue<State>,
     data: &mut State,
-    compositor: &wl_compositor::WlCompositor,
-    base: &xdg_wm_base::XdgWmBase,
     qh: &QueueHandle<State>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let surface = compositor.create_surface(&qh, ());
+    let wl_surface = data.compositor.as_ref().unwrap().create_surface(&qh, ());
+    info!("Created wl_surface");
 
-    let xdg_surface = base.get_xdg_surface(&surface, &qh, ());
+    let xdg_surface = data
+        .base
+        .as_ref()
+        .unwrap()
+        .get_xdg_surface(&wl_surface, &qh, ());
     info!("Created xdg_surface!");
 
     let xdg_top = xdg_surface.get_toplevel(&qh, ());
@@ -318,11 +275,79 @@ fn show_popup(
     xdg_top.set_app_id("Breaktimer ID".to_string());
     xdg_top.set_fullscreen(None);
 
-    surface.commit();
+    wl_surface.commit();
     info!("Performed initial commit on surface!");
     // waiting on compositor to react and then acking the configure event
     event_queue.blocking_dispatch(data)?;
 
+    let surface_size = data.surface_size.as_ref().unwrap();
+    let format = choose_format(&data.accepted_formats);
+    let stride = surface_size.width * 4; // always choosing a format of 32 bits
+
+    // TODO: 1. find a good place for the file
+    // 2. using a file seems inefficient. Can I get a file descriptor of RAM storage?
+    let filename = "screens/pool-".to_string()
+        + &surface_size.width.to_string()
+        + "-"
+        + &surface_size.height.to_string()
+        + "-Xrgb8888"; // TODO: how to get format.to_string()?
+
+    let pool_size = surface_size.height * stride * 2; // TODO: * 2 because of double-buffering
+    // necessary?
+
+    draw_checker_board(&filename, surface_size, &format)?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&filename)
+        .unwrap();
+
+    let pool = data
+        .wl_shm
+        .as_ref()
+        .unwrap()
+        .create_pool(file.as_fd(), pool_size, &qh, ());
+    info!("Created pool");
+
+    let buffer = pool.create_buffer(
+        0,
+        surface_size.width,
+        surface_size.height,
+        stride,
+        format,
+        &qh,
+        (),
+    );
+    info!("Created buffer!");
+
+    wl_surface.attach(Some(&buffer), 0, 0);
+    // surface.damage_buffer(0, 0, i32::MAX, i32::MAX); // TODO: is damage_buffer recommended on the first commit?
+    wl_surface.commit();
+    info!("Attached buffer to surface and committed surface");
+
+    event_queue.blocking_dispatch(data).unwrap();
+    sleep(Duration::from_secs(3));
+    info!("Slept for three seconds!");
+
+    info!("Shutting down!");
+
+    pool.destroy(); // "A buffer will keep a reference to the pool it was created from so it is valid to destroy the pool immediately after creating a buffer from it."
+    info!("Destroyed pool!");
+
+    buffer.destroy();
+    info!("Destroyed buffer!");
+
+    xdg_top.destroy();
+    info!("Destroyed xdg_top!");
+
+    xdg_surface.destroy();
+    info!("Destroyed xdg_surface!");
+
+    wl_surface.destroy();
+    info!("Destroyed wl_surface!");
+
+    event_queue.flush()?;
     Ok(())
 }
 
@@ -340,7 +365,7 @@ fn choose_format(formats: &Vec<WEnum<Format>>) -> Format {
 fn draw_checker_board(
     filename: &str,
     surface_size: &SurfaceSize,
-    format: &Format,
+    _format: &Format, // TODO: use format to determine what's written
 ) -> Result<(), Box<dyn std::error::Error>> {
     let result = File::create_new(filename);
     match result {
@@ -369,6 +394,20 @@ fn draw_checker_board(
     }
 }
 
+fn check_for_globals(data: &State) -> Result<(), &'static str> {
+    if data.compositor.is_none() {
+        return Err("no compositor");
+    }
+    if data.base.is_none() {
+        return Err("no base");
+    }
+    if data.wl_shm.is_none() {
+        return Err("no wl_shm");
+    }
+
+    Ok(())
+}
+
 // The main function of our program
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -384,122 +423,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wl_shm: None,
         surface_size: None,
         accepted_formats: Vec::new(),
+        compositor: None,
+        base: None,
     };
 
     // waiting on compositor to advertise globals
     event_queue.blocking_dispatch(&mut data).unwrap();
 
-    {
-        let c = COMPOSITOR.lock().unwrap();
-        let compositor = c.as_ref().unwrap();
-        let b = XDG_WM_BASE.lock().unwrap();
-        let base = b.as_ref().unwrap();
-        show_popup(&mut event_queue, &mut data, &compositor, &base, &qh)?;
-    }
+    check_for_globals(&data)?;
 
-    let wl_shm = data.wl_shm
-            .as_ref()
-            .expect("No wl_shm was bound even though all globals should have been advertised ages ago and it is needed to create a pool!");
+    show_popup(&mut event_queue, &mut data, &qh)?;
 
-    let surface_size = data.surface_size.as_ref().unwrap();
-    let format = choose_format(&data.accepted_formats);
-    let stride = surface_size.width * 4; // always choosing a format of 32 bits
+    sleep(Duration::from_secs(3));
+    info!("Slept another three seconds");
 
-    // TODO: 1. find a good place for the file
-    // 2. using a file seems very inefficient. Can I get a file descriptor of RAM storage?
-    let filename = "../screens/pool-".to_string()
-        + &surface_size.width.to_string()
-        + "-"
-        + &surface_size.height.to_string()
-        + "-Xrgb8888"; // TODO: how to get format.to_string()?
+    show_popup(&mut event_queue, &mut data, &qh)?;
 
-    let pool_size = surface_size.height * stride * 2; // TODO: * 2 because of double-buffering?
-
-    draw_checker_board(&filename, surface_size, &format)?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(&filename)
-        .unwrap();
-
-    let pool = wl_shm.create_pool(file.as_fd(), pool_size, &qh, ());
-
-    let buffer = pool.create_buffer(
-        0,
-        surface_size.width,
-        surface_size.height,
-        stride,
-        format,
-        &qh,
-        (),
-    );
-    info!("Created buffer!");
-
-    {
-        let s = WL_SURFACE.lock().unwrap();
-        let surface = s
-            .as_ref()
-            .expect("No surface even though a buffer was already created for it?!");
-        surface.attach(Some(&buffer), 0, 0);
-        // surface.damage_buffer(0, 0, i32::MAX, i32::MAX); // TODO: is damage_buffer recommended on the first commit?
-        surface.commit();
-        info!("Attached buffer to surface and committed surface");
-    }
-
-    event_queue.blocking_dispatch(&mut data).unwrap();
-    sleep(Duration::from_secs(1));
-    info!("Slept for one second!");
-
-    {
-        let t = XDG_TOP.lock().unwrap();
-        let top = t
-            .as_ref()
-            .expect("XDG_TOP was lost?? by now the XdgToplevel should have been created for sure!");
-        top.unset_fullscreen();
-        info!("Unset fullscreen for XdgToplevel");
-    }
-
-    // expecting a configure event
-    event_queue.blocking_dispatch(&mut data).unwrap();
-    {
-        let s = WL_SURFACE.lock().unwrap();
-        let surface = s.as_ref().unwrap();
-        surface.commit();
-        info!("Committed after minimizing!");
-    }
-
-    sleep(Duration::from_secs(1));
-    info!("Slept for one second!");
-
-    info!("Shutting down!");
-
-    pool.destroy(); // "A buffer will keep a reference to the pool it was created from so it is valid to destroy the pool immediately after creating a buffer from it."
-    info!("Destroyed pool!");
-
-    buffer.destroy();
-    info!("Destroyed buffer!");
-    {
-        let xdg_top = XDG_TOP.lock().unwrap();
-        if let Some(xdg_top) = xdg_top.as_ref() {
-            xdg_top.destroy();
-            info!("Destroyed xdg_top!");
-        }
-    }
-    {
-        let xdg_surface = XDG_SURFACE.lock().unwrap();
-        if let Some(xdg_surface) = xdg_surface.as_ref() {
-            xdg_surface.destroy();
-            info!("Destroyed xdg_surface!");
-        }
-    }
-    {
-        let surface = WL_SURFACE.lock().unwrap();
-        if let Some(surface) = surface.as_ref() {
-            surface.destroy();
-            info!("Destroyed surface!");
-        }
-    }
+    // just in case any events were forgotten -- probably superfluous
+    event_queue.dispatch_pending(&mut data)?;
 
     Ok(())
 }
