@@ -28,8 +28,6 @@ struct SurfaceSize {
 
 #[derive(Debug)]
 pub struct State {
-    // pub(crate) wl_seat: Option<wl_seat::WlSeat>,
-    // pub(crate) qh: QueueHandle<State>,
     wl_shm: Option<wl_shm::WlShm>,
     surface_size: Option<SurfaceSize>,
     accepted_formats: Vec<WEnum<Format>>,
@@ -322,13 +320,13 @@ fn show_popup(
     info!("Created buffer!");
 
     wl_surface.attach(Some(&buffer), 0, 0);
-    // surface.damage_buffer(0, 0, i32::MAX, i32::MAX); // TODO: is damage_buffer recommended on the first commit?
     wl_surface.commit();
     info!("Attached buffer to surface and committed surface");
 
     event_queue.blocking_dispatch(data).unwrap();
-    sleep(Duration::from_secs(3));
-    info!("Slept for three seconds!");
+
+    // waiting until the break is over
+    sleep(Duration::from_secs(30)); // TODO: make configurable
 
     info!("Shutting down!");
 
@@ -430,17 +428,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // waiting on compositor to advertise globals
     event_queue.blocking_dispatch(&mut data).unwrap();
 
+    // make sure all necessary globals have been bound
     check_for_globals(&data)?;
 
-    show_popup(&mut event_queue, &mut data, &qh)?;
-
-    sleep(Duration::from_secs(3));
-    info!("Slept another three seconds");
-
-    show_popup(&mut event_queue, &mut data, &qh)?;
-
-    // just in case any events were forgotten -- probably superfluous
-    event_queue.dispatch_pending(&mut data)?;
-
-    Ok(())
+    loop {
+        //waiting until it's break time
+        sleep(Duration::from_secs(15)); // TODO: make configurable
+        info!("Slept for 300 seconds");
+        show_popup(&mut event_queue, &mut data, &qh)?;
+    }
 }

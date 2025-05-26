@@ -1,0 +1,5 @@
+# compiled files
+target/
+
+# for only contains generated output
+screens/
