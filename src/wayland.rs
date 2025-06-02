@@ -1,10 +1,11 @@
+use core::str;
 use log::{error, info};
 use std::{
+    env,
     fs::{self, File},
-    io::{BufWriter, Write},
-    os::fd::AsFd,
-    thread::sleep,
-    time::Duration,
+    io::{BufWriter, ErrorKind, Write},
+    os::{fd::AsFd, unix::net::UnixDatagram},
+    time::{Duration, Instant},
 };
 
 use wayland_client::{
@@ -18,6 +19,8 @@ use wayland_client::{
     },
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+
+use crate::BREAK_DURATION_SECONDS;
 
 #[derive(Debug)]
 pub(crate) struct SurfaceSize {
@@ -251,46 +254,94 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     }
 }
 
+fn wait_until_work(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error::Error>> {
+    // waiting until the break is over
+    println!("Break time!");
+    let mut breaktime = true;
+    let now = Instant::now();
+    // setting read timeout every time, because outside of every break it's set to a different value
+    socket.set_read_timeout(Some(Duration::from_secs(BREAK_DURATION_SECONDS)))?;
+
+    while breaktime {
+        let mut buffer = [0; 300];
+        let result = socket.recv(&mut buffer);
+        match result {
+            Ok(bytes_read) => {
+                assert!(bytes_read > 0);
+                // trimming the last byte, because it's one of the zeros written by us
+                let string_read = str::from_utf8(&buffer[..bytes_read])?;
+
+                if string_read == "skip" {
+                    println!("Break was skipped!");
+                    breaktime = false;
+                } else {
+                    println!("[break]: Received unknown argument '{string_read}'");
+                }
+            }
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                let elapsed = now.elapsed().as_secs();
+                if elapsed < BREAK_DURATION_SECONDS {
+                    println!("[break]: Read was interrupted after {elapsed} seconds.");
+                    socket.set_read_timeout(Some(Duration::from_secs(
+                        BREAK_DURATION_SECONDS - elapsed,
+                    )))?;
+                    breaktime = true;
+                } else {
+                    println!("Break is over!");
+                    breaktime = false;
+                }
+            }
+            Err(err) => {
+                let kind = err.kind();
+                panic!("[break]: Unexpected error '{err}' with ErrorKind {kind} reading!");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn show_popup(
     event_queue: &mut EventQueue<State>,
     data: &mut State,
     qh: &QueueHandle<State>,
+    socket: &mut UnixDatagram,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let wl_surface = data.compositor.as_ref().unwrap().create_surface(&qh, ());
-    info!("Created wl_surface");
 
     let xdg_surface = data
         .base
         .as_ref()
         .unwrap()
         .get_xdg_surface(&wl_surface, &qh, ());
-    info!("Created xdg_surface!");
 
     let xdg_top = xdg_surface.get_toplevel(&qh, ());
-    info!("Created xdg_top!");
     xdg_top.set_title("Title".to_string());
     xdg_top.set_app_id("Breaktimer ID".to_string());
     xdg_top.set_fullscreen(None);
 
+    // performing initial commit
     wl_surface.commit();
-    info!("Performed initial commit on surface!");
     // waiting on compositor to react and then acking the configure event
     event_queue.blocking_dispatch(data)?;
 
+    // TODO: creating a pool only needs to be done once, so long as the surface size does not
+    // change -> don't destroy the pool, but instead keep the reference and reuse it
     let surface_size = data.surface_size.as_ref().unwrap();
     let format = choose_format(&data.accepted_formats);
     let stride = surface_size.width * 4; // always choosing a format of 32 bits
 
-    // TODO: 1. find a good place for the file
-    // 2. using a file seems inefficient. Can I get a file descriptor of RAM storage?
-    let filename = "screens/pool-".to_string()
+    // TODO: using a file seems inefficient. Can I get a file descriptor of RAM storage?
+    let runtime_dir = env::var("XDG_RUNTIME_DIR")?;
+    let filename = runtime_dir
+        + "/wlbreaktimer-pool-"
         + &surface_size.width.to_string()
         + "-"
         + &surface_size.height.to_string()
         + "-Xrgb8888"; // TODO: how to get format.to_string()?
-
-    let pool_size = surface_size.height * stride * 2; // TODO: * 2 because of double-buffering
-    // necessary?
+    //
+    // TODO: * 2 because of double-buffering necessary?
+    let pool_size = surface_size.height * stride * 2;
 
     draw_checker_board(&filename, surface_size, &format)?;
     let file = fs::OpenOptions::new()
@@ -305,7 +356,6 @@ pub(crate) fn show_popup(
         .as_ref()
         .unwrap()
         .create_pool(file.as_fd(), pool_size, &qh, ());
-    info!("Created pool");
 
     let buffer = pool.create_buffer(
         0,
@@ -316,33 +366,21 @@ pub(crate) fn show_popup(
         &qh,
         (),
     );
-    info!("Created buffer!");
+    info!("Created pool, buffer, xdg_top, xdg_surface and wl_surface!");
 
     wl_surface.attach(Some(&buffer), 0, 0);
     wl_surface.commit();
-    info!("Attached buffer to surface and committed surface");
 
     event_queue.blocking_dispatch(data).unwrap();
 
-    // waiting until the break is over
-    sleep(Duration::from_secs(30)); // TODO: make configurable
-
-    info!("Shutting down!");
+    wait_until_work(socket)?;
 
     pool.destroy(); // "A buffer will keep a reference to the pool it was created from so it is valid to destroy the pool immediately after creating a buffer from it."
-    info!("Destroyed pool!");
-
     buffer.destroy();
-    info!("Destroyed buffer!");
-
     xdg_top.destroy();
-    info!("Destroyed xdg_top!");
-
     xdg_surface.destroy();
-    info!("Destroyed xdg_surface!");
-
     wl_surface.destroy();
-    info!("Destroyed wl_surface!");
+    info!("Destroyed pool, buffer, xdg_top, xdg_surface and wl_surface!");
 
     event_queue.flush()?;
     Ok(())
