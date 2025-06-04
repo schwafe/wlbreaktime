@@ -3,6 +3,7 @@ use libsystemd::{
     activation::{self, FileDescriptor, IsType},
     daemon::{self, NotifyState},
 };
+use regex::Regex;
 use std::{
     io::ErrorKind,
     os::{
@@ -16,7 +17,6 @@ use wayland_client::{Connection, EventQueue};
 mod wayland;
 use wayland::{State, check_for_globals, show_popup};
 
-// TODO: make configurable
 const BREAK_DURATION_SECONDS: u64 = 80;
 const SECONDS_BETWEEN_BREAKS: u64 = 1800;
 
@@ -26,11 +26,14 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
     let mut breaktime = false;
     let mut now = Instant::now();
 
+    // to enable changing the remaining time, the break duration needs to be mutable
+    let mut seconds_until_break = SECONDS_BETWEEN_BREAKS;
+
     while !breaktime {
         // setting read timeout every time, because for every break it's set to a different value
         // and on interrupts it needs to be adjusted
         socket.set_read_timeout(Some(Duration::from_secs(
-            SECONDS_BETWEEN_BREAKS - now.elapsed().as_secs(),
+            seconds_until_break - now.elapsed().as_secs(),
         )))?;
 
         let mut buffer = [0; 300];
@@ -38,45 +41,66 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
         match result {
             Ok((bytes_read, return_address)) => {
                 assert!(bytes_read > 0);
+                // not every command needs a response, however it simplifies things if
+                // unbound sockets are not accepted
+                let path = return_address
+                    .as_pathname()
+                    .expect("Unable to respond, because the message came from an unbound socket!");
                 // trimming the last byte, because it's one of the zeros written by us
                 let string_read = str::from_utf8(&buffer[..bytes_read])?;
-
-                match string_read {
-                    "break" => {
-                        println!("Skipped to break!");
-                        breaktime = true;
-                    }
-                    "reset" => {
-                        println!("Reset timer, next break in {SECONDS_BETWEEN_BREAKS} seconds!");
-                        now = Instant::now();
-                    }
-                    "time" => {
-                        let remainder = SECONDS_BETWEEN_BREAKS - now.elapsed().as_secs();
-                        match return_address.as_pathname() {
-                            Some(path) => {
-                                println!(
-                                    "Responding to inquiry about remaining time before break! {remainder} seconds remain."
-                                );
-                                socket.send_to(remainder.to_string().as_bytes(), path)?;
-                            }
-                            None => {
-                                println!(
-                                    "Unable to respond to inquiry about time, because it came from an unbound socket!"
-                                );
-                            }
+                let re = Regex::new(r"^([a-z]+)( (\d+))?").unwrap();
+                let capture = re.captures(string_read);
+                match capture {
+                    Some(c) => match c.get(1).unwrap().as_str() {
+                        "break" => {
+                            println!("Skipped to break!");
+                            breaktime = true;
                         }
-                    }
-                    _ => println!("[work]: Received unknown argument '{string_read}'"),
+                        "set" => {
+                            let minutes = c
+                                .get(3)
+                                .expect("missing duration to set to!")
+                                .as_str()
+                                .parse::<u64>()
+                                .expect("unable to parse the provided duration!");
+                            seconds_until_break = minutes * 60;
+                            now = Instant::now();
+                            println!("Set timer, next break in {seconds_until_break} seconds!");
+                        }
+                        "reset" => {
+                            seconds_until_break = SECONDS_BETWEEN_BREAKS;
+                            now = Instant::now();
+                            socket.send_to(seconds_until_break.to_string().as_bytes(), path)?;
+                            println!("Reset timer, next break in {seconds_until_break} seconds!");
+                        }
+                        "time" => {
+                            let remainder = seconds_until_break - now.elapsed().as_secs();
+                            println!(
+                                "Responding to inquiry about remaining time before break! {remainder} seconds remain."
+                            );
+                            socket.send_to(remainder.to_string().as_bytes(), path)?;
+                        }
+                        &_ => panic!("found match, but non-optional capture group is missing!"),
+                    },
+                    None => println!("[work]: Received unknown argument '{string_read}'"),
                 }
             }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {} // do nothing on interrupt
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {} // do nothing on timeout
+            Err(err) if err.kind() == ErrorKind::Interrupted => {
+                // interrupt happens e.g. when system wakes up from suspension -> treat like reset
+                seconds_until_break = SECONDS_BETWEEN_BREAKS;
+                now = Instant::now();
+                println!(
+                    "Reset timer because system suspension was detected. Next break is in {seconds_until_break} seconds!"
+                );
+            }
             Err(err) => {
                 let kind = err.kind();
                 panic!("[work]: Unexpected error '{err}' with ErrorKind {kind} reading!");
             }
         }
 
-        if now.elapsed().as_secs() >= SECONDS_BETWEEN_BREAKS {
+        if now.elapsed().as_secs() >= seconds_until_break {
             println!("Work time is over!");
             breaktime = true;
         }
@@ -92,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // receiving the socket from systemd
-    let mut descriptors = activation::receive_descriptors(true)?; // TODO: true or false?
+    let mut descriptors = activation::receive_descriptors(true)?;
     assert!(descriptors.len() == 1);
 
     let fd = descriptors.pop().unwrap();

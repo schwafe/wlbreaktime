@@ -1,13 +1,22 @@
 [package]
-name = "wlbreaktimer"
-version = "0.3.0"
+name = "wlbreaktime"
+version = "0.4.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "wlbreaktime-daemon"
+path = "src/main.rs"
+
+[[bin]]
+name = "wlbreaktime-helper"
+path = "src/bin/helper.rs"
 
 [dependencies]
 env_logger = "0.11.8"
 lazy_static = "1.5.0"
 libsystemd = "0.7.2"
 log = "0.4.27"
+regex = "1.11.1"
 wayland-client = "0.31.8"
 wayland-protocols = { version = "0.32.8", features = ["client"] }

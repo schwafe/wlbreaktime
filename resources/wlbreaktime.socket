@@ -1,0 +1,9 @@
+[Unit]
+Description=socket for wlbreaktime -- An application that reminds you to take regular breaks
+Requires=wlbreaktime.service
+
+[Socket]
+ListenDatagram=%t/wlbreaktime.socket
+
+[Install]
+WantedBy=sockets.target

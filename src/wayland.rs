@@ -210,16 +210,11 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
                 // using the provided XdgSurface handle seems like it might be able to create racing
                 // conditions
 
-                // TODO: since this event is handled after the others, the configuring should
-                // already be done?
                 xdg_surface.ack_configure(serial);
                 info!("Acked configure event");
 
-                if state.accepted_formats.len() > 0 {
-                    // let buffer: wl_buffer::WlBuffer = TODO: attach buffer
-                    // TODO: commit? at least normally after a configure event a commit is needed
-                } else {
-                    error!("The compositor did not advertise any buffer formats it accepts.")
+                if state.accepted_formats.is_empty() {
+                    panic!("The compositor did not advertise any buffer formats it accepts.")
                 }
             }
             _ => {
@@ -242,7 +237,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
             xdg_toplevel::Event::Configure {
                 width,
                 height,
-                states: _, // TODO: states are probably important
+                states: _,
             } => {
                 state.surface_size = Some(SurfaceSize { width, height });
                 info!("XdgToplevel configure event to width {width} and height {height}");
@@ -338,7 +333,8 @@ pub(crate) fn show_popup(
         + &surface_size.width.to_string()
         + "-"
         + &surface_size.height.to_string()
-        + "-Xrgb8888"; // TODO: how to get format.to_string()?
+        // + "-Xrgb8888"; // TODO: how to get format.to_string()?
+        + &format!("{format:?}"); // HACK: depending on the Debug trait does not sound good
     //
     // TODO: * 2 because of double-buffering necessary?
     let pool_size = surface_size.height * stride * 2;
@@ -404,6 +400,10 @@ fn draw_checker_board(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let result = File::create_new(filename);
     match result {
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            // do nothing, because the file has already been generated
+            Ok(())
+        }
         Ok(file) => {
             let mut buf = BufWriter::new(file);
             let mut index = 0;
@@ -424,8 +424,12 @@ fn draw_checker_board(
             }
             Ok(())
         }
-        Err(_) => Ok(()), //Err(result), TODO: how to match the AlreadyExists error? and how to
-                          //return the other errors?
+        Err(err) => {
+            let kind = err.kind();
+            panic!(
+                "Error while trying to create the wayland pool file. Error '{err:?}' with ErrorKind '{kind}'"
+            );
+        }
     }
 }
 

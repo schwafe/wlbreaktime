@@ -1,0 +1,11 @@
+[Unit]
+Description=wlbreaktime -- An application that reminds you to take regular breaks
+Requires=wlbreaktime.socket
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=notify
+ExecStart=/home/felix/Code/wlbreaktime/target/debug/wlbreaktime-daemon
+Restart=on-failure
