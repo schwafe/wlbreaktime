@@ -17,8 +17,8 @@ mod wayland;
 use wayland::{State, check_for_globals, show_popup};
 
 // TODO: make configurable
-const BREAK_DURATION_SECONDS: u64 = 8;
-const SECONDS_BETWEEN_BREAKS: u64 = 18;
+const BREAK_DURATION_SECONDS: u64 = 80;
+const SECONDS_BETWEEN_BREAKS: u64 = 1800;
 
 fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error::Error>> {
     //waiting until it's break time
@@ -26,14 +26,17 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
     let mut breaktime = false;
     let mut now = Instant::now();
 
-    // setting read timeout every time, because for every break it's set to a different value
-    socket.set_read_timeout(Some(Duration::from_secs(SECONDS_BETWEEN_BREAKS)))?;
-
     while !breaktime {
+        // setting read timeout every time, because for every break it's set to a different value
+        // and on interrupts it needs to be adjusted
+        socket.set_read_timeout(Some(Duration::from_secs(
+            SECONDS_BETWEEN_BREAKS - now.elapsed().as_secs(),
+        )))?;
+
         let mut buffer = [0; 300];
-        let result = socket.recv(&mut buffer);
+        let result = socket.recv_from(&mut buffer);
         match result {
-            Ok(bytes_read) => {
+            Ok((bytes_read, return_address)) => {
                 assert!(bytes_read > 0);
                 // trimming the last byte, because it's one of the zeros written by us
                 let string_read = str::from_utf8(&buffer[..bytes_read])?;
@@ -45,33 +48,37 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
                     }
                     "reset" => {
                         println!("Reset timer, next break in {SECONDS_BETWEEN_BREAKS} seconds!");
-                        breaktime = false;
                         now = Instant::now();
+                    }
+                    "time" => {
+                        let remainder = SECONDS_BETWEEN_BREAKS - now.elapsed().as_secs();
+                        match return_address.as_pathname() {
+                            Some(path) => {
+                                println!(
+                                    "Responding to inquiry about remaining time before break! {remainder} seconds remain."
+                                );
+                                socket.send_to(remainder.to_string().as_bytes(), path)?;
+                            }
+                            None => {
+                                println!(
+                                    "Unable to respond to inquiry about time, because it came from an unbound socket!"
+                                );
+                            }
+                        }
                     }
                     _ => println!("[work]: Received unknown argument '{string_read}'"),
                 }
             }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                let elapsed = now.elapsed().as_secs();
-                // let kind = err.kind();
-                // println!(
-                //     "[work]: Read was interrupted by error {err} with errorkind {kind} after {elapsed} seconds."
-                // );
-                if elapsed < SECONDS_BETWEEN_BREAKS {
-                    println!("[work]: Read was interrupted after {elapsed} seconds.");
-                    socket.set_read_timeout(Some(Duration::from_secs(
-                        SECONDS_BETWEEN_BREAKS - elapsed,
-                    )))?;
-                    breaktime = false;
-                } else {
-                    println!("Work time is over!");
-                    breaktime = true;
-                }
-            }
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {} // do nothing on interrupt
             Err(err) => {
                 let kind = err.kind();
                 panic!("[work]: Unexpected error '{err}' with ErrorKind {kind} reading!");
             }
+        }
+
+        if now.elapsed().as_secs() >= SECONDS_BETWEEN_BREAKS {
+            println!("Work time is over!");
+            breaktime = true;
         }
     }
 
