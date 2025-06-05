@@ -18,13 +18,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Too many arguments!");
         return Ok(());
     }
-    let arg = args.nth(1).unwrap();
+    args.next().unwrap(); // generally contains the program's name, but this is not a given
+    let arg = args.next().unwrap();
     let mut minutes = None;
 
     match arg.as_str() {
-        "set" => minutes = Some(args.nth(2).expect("no duration to set to provided!")),
+        "set" => {
+            let m = args.next().expect("no duration to set to provided!");
+            m.parse::<u16>()
+                .expect("Second argument '{m:?}' is no valid duration!");
+            minutes = Some(m);
+        }
         "break" | "reset" | "time" | "skip" => {
-            assert!(args.nth(2).is_none(), "did not expect a second argument!");
+            assert!(args.next().is_none(), "did not expect a second argument!");
         }
         _ => {
             println!(
@@ -52,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(s) => socket = s,
     }
 
+    // send first argument
     let result = socket.send_to(arg.as_bytes(), runtime_dir.clone() + "/" + SOCKET_NAME);
 
     match result {
