@@ -322,10 +322,12 @@ pub(crate) fn show_popup(
 
     // TODO: creating a pool only needs to be done once, so long as the surface size does not
     // change -> don't destroy the pool, but instead keep the reference and reuse it
-    let surface_size = data
-        .surface_size
-        .as_ref()
-        .expect("Surface size was not provided!");
+    let surface_size = data.surface_size.as_ref().unwrap_or(&SurfaceSize {
+        height: 1080,
+        width: 1920,
+    });
+    // FIXME: sometimes the surface size is missing
+    // .expect("Surface size was not provided!");
     let format = choose_format(&data.accepted_formats);
     let stride = surface_size.width * 4; // always choosing a format of 32 bits
 
