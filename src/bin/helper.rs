@@ -82,8 +82,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut buffer = [0; 30];
             let bytes_read = socket.recv(&mut buffer)?;
             let string_read = str::from_utf8(&buffer[..bytes_read])?;
-
-            println!("{string_read} seconds remain until the next break!");
+            let seconds = string_read.parse::<u64>().unwrap();
+            if seconds > 60 {
+                let minutes = seconds / 60;
+                let rest = seconds % 60;
+                println!("{minutes} minutes and {rest} seconds remain until the next break!");
+            } else {
+                println!("{string_read} seconds remain until the next break!");
+            }
         }
         _ => {
             // no action needed
