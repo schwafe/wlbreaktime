@@ -3,6 +3,9 @@ There are plenty of applications that remind you to take breaks, however there a
 There are still a lot of things I plan on supporting, some of them are:
  - proper packaging (no need for manual copying of files during installation)
  - loading a configuration and reloading on systemctl reload
- - playing a sound when the break is over
  - sending a notification a few seconds before a break starts
  - making the screen blocking optional (and provide an alternative)
+
+
+The current sound being used is:
+Rebana L Gong by RoNz -- https://freesound.org/s/397942/ -- License: Attribution 3.0

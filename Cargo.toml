@@ -1,6 +1,6 @@
 [package]
 name = "wlbreaktime"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
@@ -18,5 +18,6 @@ lazy_static = "1.5.0"
 libsystemd = "0.7.2"
 log = "0.4.27"
 regex = "1.11.1"
+rodio = "0.20.1"
 wayland-client = "0.31.8"
 wayland-protocols = { version = "0.32.8", features = ["client"] }

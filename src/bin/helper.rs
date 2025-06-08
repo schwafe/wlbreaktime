@@ -7,8 +7,11 @@ const SOCKET_NAME: &str = "wlbreaktime.socket";
 const HELPER_SOCKET_NAME: &str = "wlbreaktime-helper.socket";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let runtime_dir = env::var("XDG_RUNTIME_DIR")?;
-
+    // --tell -t -> tell remaining time
+    // --set -s -> set remaining time
+    // --reset -r -> reset timer
+    // --break -b -> start a break
+    // --skip -k -> skip the break
     let mut args = env::args();
     // TODO: provide a description of possible arguments
     if args.len() < 2 {
@@ -39,6 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     }
+
+    let runtime_dir = env::var("XDG_RUNTIME_DIR")?;
 
     let result = UnixDatagram::bind(runtime_dir.clone() + "/" + HELPER_SOCKET_NAME);
     let socket;

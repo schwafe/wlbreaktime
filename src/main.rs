@@ -4,14 +4,17 @@ use libsystemd::{
     daemon::{self, NotifyState},
 };
 use std::{
-    io::ErrorKind,
+    io::{Cursor, ErrorKind},
     os::{
         fd::{FromRawFd, IntoRawFd},
         unix::net::UnixDatagram,
     },
+    sync::Arc,
     time::{Duration, Instant},
 };
 use wayland_client::{Connection, EventQueue};
+
+use rodio::{Decoder, OutputStream, OutputStreamHandle, source::Source};
 
 mod wayland;
 use wayland::{State, check_for_globals, show_popup};
@@ -107,6 +110,8 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
                 println!(
                     "Reset timer because system suspension was detected. Next break is in {work_duration_seconds} seconds!"
                 );
+                // TODO: also alert via notification as a temporary hack, to make sure this only
+                // occurs on wakeup
             }
             Err(err) => {
                 let kind = err.kind();
@@ -123,13 +128,25 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+fn play_sound(
+    stream_handle: &OutputStreamHandle,
+    sound_data: &Arc<[u8]>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // https://stackoverflow.com/questions/78742705/how-to-play-sound-from-memory-using-rodio
+    let source = Decoder::new(Cursor::new(Arc::clone(&sound_data))).unwrap();
+
+    // Play the sound directly on the device
+    stream_handle.play_raw(source.convert_samples())?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !daemon::booted() {
         println!("Not running systemd, early exit.");
         return Ok(());
     };
 
-    // receiving the socket from systemd
+    // systemd setup -- receive file descriptor (socket handle)
     let mut descriptors = activation::receive_descriptors(true)?;
     assert!(descriptors.len() == 1);
 
@@ -140,6 +157,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut socket = unsafe { UnixDatagram::from_raw_fd(FileDescriptor::into_raw_fd(fd)) };
+
+    // audio setup
+    // get output stream handle to default physical sound device
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    // load sound into memory and create a pointer to it
+    let bytes = include_bytes!("../resources/rebana_l_gong.wav");
+    let sound_data: Arc<[u8]> = Arc::from(bytes.clone());
 
     // wayland set-up
     let connection = Connection::connect_to_env().unwrap();
@@ -171,7 +195,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         wait_until_break(&mut socket)?;
+        play_sound(&stream_handle, &sound_data)?;
 
         show_popup(&mut event_queue, &mut data, &qh, &mut socket)?;
+        play_sound(&stream_handle, &sound_data)?;
     }
 }
