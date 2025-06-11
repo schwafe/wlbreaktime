@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match result {
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            panic!("Breaktimer does not seem to be running!"); // socket is not available
+            panic!("Breaktime does not seem to be running!"); // socket is not available
         }
         Err(err) => panic!("Error '{err}' unexpectedly occured while sending a message!"),
         Ok(_) => {

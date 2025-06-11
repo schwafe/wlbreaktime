@@ -12,9 +12,12 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+// show pop-up
 use wayland_client::{Connection, EventQueue};
-
+// play a sound
 use rodio::{Decoder, OutputStream, OutputStreamHandle, source::Source};
+// show notifications
+use notify_rust::Notification;
 
 mod wayland;
 use wayland::{State, check_for_globals, show_popup};
@@ -23,11 +26,15 @@ const BREAK_DURATION_SECONDS: u64 = 80;
 const SECONDS_BETWEEN_BREAKS: u64 = 1800;
 const NORMAL_READ_TIMEOUT: u64 = 3;
 
-fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error::Error>> {
+/*
+ * returns true if work time was skipped
+ */
+fn wait_until_break(socket: &mut UnixDatagram) -> Result<bool, Box<dyn std::error::Error>> {
     //waiting until it's break time
     println!("Work time!");
     let mut breaktime = false;
     let mut now = Instant::now();
+    let mut skipped = false;
 
     // to enable changing the remaining time, the break duration needs to be mutable
     let mut work_duration_seconds = SECONDS_BETWEEN_BREAKS;
@@ -57,6 +64,7 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
                     "break" => {
                         println!("Skipped to break!");
                         breaktime = true;
+                        skipped = true;
                     }
                     "set" => {
                         socket.set_read_timeout(Some(Duration::from_secs(NORMAL_READ_TIMEOUT)))?;
@@ -104,13 +112,17 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {} // do nothing on timeout
             Err(err) if err.kind() == ErrorKind::Interrupted => {
-                // interrupt happens e.g. when system wakes up from suspension -> treat like reset
+                // interrupt happens when system wakes up from suspension -> treat like reset
                 work_duration_seconds = SECONDS_BETWEEN_BREAKS;
                 now = Instant::now();
                 println!(
                     "Reset timer because system suspension was detected. Next break is in {work_duration_seconds} seconds!"
                 );
-                // TODO: also alert via notification as a temporary hack, to make sure this only
+                Notification::new()
+                    .summary("Reset break timer")
+                    .body("The timer was reset because system suspension was detected.")
+                    .show()?;
+                // HACK this notification is a temporary hack, to make sure this only
                 // occurs on wakeup
             }
             Err(err) => {
@@ -125,7 +137,7 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error:
         }
     }
 
-    Ok(())
+    Ok(skipped)
 }
 
 fn play_sound(
@@ -186,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // make sure all necessary globals have been bound
     check_for_globals(&data)?;
 
-    // breaktimer is ready -> notify systemd
+    // breaktime is ready -> notify systemd
     let sent = daemon::notify(true, &[NotifyState::Ready]).expect("notify failed");
     assert!(
         sent,
@@ -194,7 +206,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     loop {
-        wait_until_break(&mut socket)?;
+        let skipped = wait_until_break(&mut socket)?;
+
+        if !skipped {
+            Notification::new()
+                .summary("Its break time!")
+                .body("The next break starts in 10 seconds.")
+                .show()?;
+            std::thread::sleep(Duration::from_secs(10));
+        }
+        // FIXME showing the notification, sleeping or playing the sound seems to sometimes delay
+        // the break
+
         play_sound(&stream_handle, &sound_data)?;
 
         show_popup(&mut event_queue, &mut data, &qh, &mut socket)?;

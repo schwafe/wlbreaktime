@@ -334,7 +334,7 @@ pub(crate) fn show_popup(
     // TODO: using a file seems inefficient. Can I get a file descriptor of RAM storage?
     let runtime_dir = env::var("XDG_RUNTIME_DIR")?;
     let filename = runtime_dir
-        + "/wlbreaktimer-pool-"
+        + "/wlbreaktime-pool-"
         + &surface_size.width.to_string()
         + "-"
         + &surface_size.height.to_string()
