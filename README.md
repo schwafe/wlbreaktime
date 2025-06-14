@@ -2,9 +2,9 @@ There are plenty of applications that remind you to take breaks, however there a
 
 There are still a lot of things I plan on supporting, some of them are:
  - proper packaging (no need for manual copying of files during installation)
- - loading a configuration and reloading on systemctl reload
- - sending a notification a few seconds before a break starts
- - making the screen blocking optional (and provide an alternative)
+ - enable reloading of the config on systemctl reload
+ - think of an alternative for the screen blocking (maybe a smaller pop-up?)
+ - implement tests
 
 
 The current sound being used is:

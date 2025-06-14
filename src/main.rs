@@ -22,14 +22,19 @@ use notify_rust::Notification;
 mod wayland;
 use wayland::{State, check_for_globals, show_popup};
 
-const BREAK_DURATION_SECONDS: u64 = 80;
-const SECONDS_BETWEEN_BREAKS: u64 = 1800;
+use crate::wayland::wait_until_work;
+
+mod config;
+
 const NORMAL_READ_TIMEOUT: u64 = 3;
 
 /*
  * returns true if work time was skipped
  */
-fn wait_until_break(socket: &mut UnixDatagram) -> Result<bool, Box<dyn std::error::Error>> {
+fn wait_until_break(
+    socket: &mut UnixDatagram,
+    break_interval: u64,
+) -> Result<bool, Box<dyn std::error::Error>> {
     //waiting until it's break time
     println!("Work time!");
     let mut breaktime = false;
@@ -37,7 +42,7 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<bool, Box<dyn std::erro
     let mut skipped = false;
 
     // to enable changing the remaining time, the break duration needs to be mutable
-    let mut work_duration_seconds = SECONDS_BETWEEN_BREAKS;
+    let mut work_duration_seconds = break_interval;
 
     while !breaktime {
         // setting read timeout every time, because for every break it's set to a different value
@@ -92,7 +97,7 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<bool, Box<dyn std::erro
                         }
                     }
                     "reset" => {
-                        work_duration_seconds = SECONDS_BETWEEN_BREAKS;
+                        work_duration_seconds = break_interval;
                         now = Instant::now();
                         socket.send_to(work_duration_seconds.to_string().as_bytes(), path)?;
                         println!("Reset timer, next break in {work_duration_seconds} seconds!");
@@ -113,7 +118,7 @@ fn wait_until_break(socket: &mut UnixDatagram) -> Result<bool, Box<dyn std::erro
             Err(err) if err.kind() == ErrorKind::WouldBlock => {} // do nothing on timeout
             Err(err) if err.kind() == ErrorKind::Interrupted => {
                 // interrupt happens when system wakes up from suspension -> treat like reset
-                work_duration_seconds = SECONDS_BETWEEN_BREAKS;
+                work_duration_seconds = break_interval;
                 now = Instant::now();
                 println!(
                     "Reset timer because system suspension was detected. Next break is in {work_duration_seconds} seconds!"
@@ -160,7 +165,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // systemd setup -- receive file descriptor (socket handle)
     let mut descriptors = activation::receive_descriptors(true)?;
-    assert!(descriptors.len() == 1);
+    assert!(
+        descriptors.len() == 1,
+        "Systemd passed more than one file descriptor (socket). Configuration must be wrong!"
+    );
 
     let fd = descriptors.pop().unwrap();
     assert!(
@@ -169,6 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut socket = unsafe { UnixDatagram::from_raw_fd(FileDescriptor::into_raw_fd(fd)) };
+
+    let config = config::load_configuration()?;
 
     // audio setup
     // get output stream handle to default physical sound device
@@ -206,9 +216,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     loop {
-        let skipped = wait_until_break(&mut socket)?;
+        let skipped = wait_until_break(&mut socket, config.break_interval)?;
 
-        if !skipped {
+        if !skipped && config.show_notification {
             Notification::new()
                 .summary("Its break time!")
                 .body("The next break starts in 10 seconds.")
@@ -218,9 +228,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // FIXME showing the notification, sleeping or playing the sound seems to sometimes delay
         // the break
 
-        play_sound(&stream_handle, &sound_data)?;
+        if config.play_sound {
+            play_sound(&stream_handle, &sound_data)?;
+        }
 
-        show_popup(&mut event_queue, &mut data, &qh, &mut socket)?;
-        play_sound(&stream_handle, &sound_data)?;
+        if config.show_popup {
+            show_popup(
+                &mut event_queue,
+                &mut data,
+                &qh,
+                &mut socket,
+                config.break_duration,
+            )?;
+        } else {
+            wait_until_work(&mut socket, config.break_duration)?;
+        }
+
+        if config.play_sound {
+            play_sound(&stream_handle, &sound_data)?;
+        }
     }
 }

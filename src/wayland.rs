@@ -20,8 +20,6 @@ use wayland_client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use crate::BREAK_DURATION_SECONDS;
-
 #[derive(Debug)]
 pub(crate) struct SurfaceSize {
     width: i32,
@@ -249,13 +247,16 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     }
 }
 
-fn wait_until_work(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error::Error>> {
+pub fn wait_until_work(
+    socket: &mut UnixDatagram,
+    break_duration: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
     // waiting until the break is over
     println!("Break time!");
     let mut breaktime = true;
     let now = Instant::now();
     // setting read timeout every time, because outside of every break it's set to a different value
-    socket.set_read_timeout(Some(Duration::from_secs(BREAK_DURATION_SECONDS)))?;
+    socket.set_read_timeout(Some(Duration::from_secs(break_duration)))?;
 
     while breaktime {
         let mut buffer = [0; 300];
@@ -275,11 +276,9 @@ fn wait_until_work(socket: &mut UnixDatagram) -> Result<(), Box<dyn std::error::
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
                 let elapsed = now.elapsed().as_secs();
-                if elapsed < BREAK_DURATION_SECONDS {
+                if elapsed < break_duration {
                     println!("[break]: Read was interrupted after {elapsed} seconds.");
-                    socket.set_read_timeout(Some(Duration::from_secs(
-                        BREAK_DURATION_SECONDS - elapsed,
-                    )))?;
+                    socket.set_read_timeout(Some(Duration::from_secs(break_duration - elapsed)))?;
                     breaktime = true;
                 } else {
                     println!("Break is over!");
@@ -301,6 +300,7 @@ pub(crate) fn show_popup(
     data: &mut State,
     qh: &QueueHandle<State>,
     socket: &mut UnixDatagram,
+    break_duration: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let wl_surface = data.compositor.as_ref().unwrap().create_surface(&qh, ());
 
@@ -374,7 +374,7 @@ pub(crate) fn show_popup(
 
     event_queue.blocking_dispatch(data).unwrap();
 
-    wait_until_work(socket)?;
+    wait_until_work(socket, break_duration)?;
 
     pool.destroy(); // "A buffer will keep a reference to the pool it was created from so it is valid to destroy the pool immediately after creating a buffer from it."
     buffer.destroy();
