@@ -123,12 +123,6 @@ fn wait_until_break(
                 println!(
                     "Reset timer because system suspension was detected. Next break is in {work_duration_seconds} seconds!"
                 );
-                Notification::new()
-                    .summary("Reset break timer")
-                    .body("The timer was reset because system suspension was detected.")
-                    .show()?;
-                // HACK this notification is a temporary hack, to make sure this only
-                // occurs on wakeup
             }
             Err(err) => {
                 let kind = err.kind();
