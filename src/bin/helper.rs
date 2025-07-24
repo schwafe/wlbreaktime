@@ -78,10 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match arg.as_str() {
         "set" => {
-            socket.send_to(
-                minutes.unwrap().as_bytes(),
-                runtime_dir.clone() + "/" + SOCKET_NAME,
-            )?;
+            let time = minutes.unwrap();
+            socket.send_to(time.as_bytes(), runtime_dir.clone() + "/" + SOCKET_NAME)?;
+            println!("Remaining time set to {time} minutes!");
         }
         "time" => {
             let mut buffer = [0; 30];

@@ -2154,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "wlbreaktime"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "env_logger",
  "lazy_static",
