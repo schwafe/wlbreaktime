@@ -260,18 +260,38 @@ pub fn wait_until_work(
 
     while breaktime {
         let mut buffer = [0; 300];
-        let result = socket.recv(&mut buffer);
+        let result = socket.recv_from(&mut buffer);
         match result {
-            Ok(bytes_read) => {
+            Ok((bytes_read, return_address)) => {
                 assert!(bytes_read > 0);
                 // trimming the last byte, because it's one of the zeros written by us
                 let string_read = str::from_utf8(&buffer[..bytes_read])?;
+
+                let path = return_address
+                    .as_pathname()
+                    .expect("Unable to respond, because the message came from an unbound socket!");
+
+                let remainder = break_duration
+                    .checked_sub(now.elapsed().as_secs())
+                    .unwrap_or(0);
 
                 if string_read == "skip" {
                     println!("Break was skipped!");
                     breaktime = false;
                 } else {
-                    println!("[break]: Received unknown argument '{string_read}'");
+                    if string_read == "get" {
+                        socket.send_to(remainder.to_string().as_bytes(), path)?;
+                    } else {
+                        println!("[break]: Received unknown argument '{string_read}'");
+                    }
+
+                    if remainder > 0 {
+                        socket.set_read_timeout(Some(Duration::from_secs(remainder)))?;
+                        breaktime = true;
+                    } else {
+                        println!("Break is over!");
+                        breaktime = false;
+                    }
                 }
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
