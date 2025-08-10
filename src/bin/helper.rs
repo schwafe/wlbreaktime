@@ -7,7 +7,8 @@ const SOCKET_NAME: &str = "wlbreaktime.socket";
 const HELPER_SOCKET_NAME: &str = "wlbreaktime-helper.socket";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --tell -t -> tell remaining time
+    // --get -g -> get remaining time
+    //  -> --get [ minutes ] // optional minutes parameter to shorten output to ##m
     // --set -s -> set remaining time
     // --reset -r -> reset timer
     // --break -b -> start a break
@@ -24,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.next().unwrap(); // generally contains the program's name, but this is not a given
     let arg = args.next().unwrap();
     let mut minutes = None;
+    let mut short = false;
 
     match arg.as_str() {
         "set" => {
@@ -32,12 +34,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("Second argument '{m:?}' is no valid duration!");
             minutes = Some(m);
         }
-        "break" | "reset" | "time" | "skip" => {
+        "get" => {
+            let m = args.next();
+            match m {
+                None => {}
+                Some(s) if s == "--minutes" => {
+                    short = true;
+                }
+                Some(s) if s != "--minutes" => {
+                    assert!(
+                        args.next().is_none(),
+                        "Incorrect second argument. usage: get [--minutes]"
+                    );
+                }
+                Some(_) => {} //impossible to reach, since args are always strings?
+            }
+        }
+        "break" | "reset" | "skip" => {
             assert!(args.next().is_none(), "did not expect a second argument!");
         }
         _ => {
             println!(
-                "Incorrect first argument! Please provide one of the following arguments: break|set|reset|time|skip"
+                "Incorrect first argument! Please provide one of the following arguments: break|set|reset|get|skip"
             );
             return Ok(());
         }
@@ -82,12 +100,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket.send_to(time.as_bytes(), runtime_dir.clone() + "/" + SOCKET_NAME)?;
             println!("Remaining time set to {time} minutes!");
         }
-        "time" => {
+        "get" => {
             let mut buffer = [0; 30];
             let bytes_read = socket.recv(&mut buffer)?;
             let string_read = str::from_utf8(&buffer[..bytes_read])?;
             let seconds = string_read.parse::<u64>().unwrap();
-            if seconds > 60 {
+            if short {
+                let minutes = seconds / 60;
+                println!("{minutes}m");
+            } else if seconds > 60 {
                 let minutes = seconds / 60;
                 let rest = seconds % 60;
                 println!("{minutes} minutes and {rest} seconds remain until the next break!");
