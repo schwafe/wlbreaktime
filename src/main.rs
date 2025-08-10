@@ -106,9 +106,7 @@ fn wait_until_break(
                         let remainder = work_duration_seconds
                             .checked_sub(now.elapsed().as_secs())
                             .unwrap_or(0);
-                        println!(
-                            "Responding to inquiry about remaining time before break! {remainder} seconds remain."
-                        );
+
                         socket.send_to(remainder.to_string().as_bytes(), path)?;
                         // TODO implement some way (here and in wayland.rs) for the helper to know
                         // when it's break time and when it's work time, e.g. not just sending the
