@@ -1,3 +1,5 @@
+// TODO posting errors to journald at an incredibly fast rate: "an error occurred on output stream: A backend-specific error has occurred: ALSA function
+// 'snd_pcm_poll_descriptors_revents' failed with error 'Unknown errno (-5)'"
 use core::str;
 use libsystemd::{
     activation::{self, FileDescriptor, IsType},
@@ -9,6 +11,7 @@ use std::{
         fd::{FromRawFd, IntoRawFd},
         unix::net::UnixDatagram,
     },
+    process::Command,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -214,16 +217,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if !skipped && config.show_notification {
             Notification::new()
-                .summary("Its break time!")
+                .summary("It's break time!")
                 .body("The next break starts in 10 seconds.")
                 .show()?;
             std::thread::sleep(Duration::from_secs(10));
         }
-        // FIXME showing the notification, sleeping or playing the sound seems to sometimes delay
-        // the break
 
         if config.play_sound {
             play_sound(&stream_handle, &sound_data)?;
+        }
+
+        if config.turn_off_monitors {
+            let status = Command::new("niri")
+                .arg("msg")
+                .arg("action")
+                .arg("power-off-monitors")
+                .status();
+
+            if let Err(err) = status {
+                println!("Monitors could not be turned off! The error: {err}");
+            }
         }
 
         if config.show_popup {
@@ -236,6 +249,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         } else {
             wait_until_work(&mut socket, config.break_duration)?;
+        }
+
+        if config.turn_off_monitors {
+            let status = Command::new("niri")
+                .arg("msg")
+                .arg("action")
+                .arg("power-on-monitors")
+                .status();
+
+            if let Err(err) = status {
+                println!("Monitors could not be turned on! The error: {err}");
+            }
         }
 
         if config.play_sound {

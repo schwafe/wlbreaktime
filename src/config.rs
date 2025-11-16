@@ -1,7 +1,7 @@
 use std::{
     env::{self, VarError},
-    fs::File,
-    io::{ErrorKind, Read},
+    fs,
+    io::ErrorKind,
 };
 
 use regex::Regex;
@@ -13,6 +13,7 @@ const DEFAULT_BREAK_INTERVAL_SECONDS: u64 = 1800;
 const DEFAULT_SHOW_POPUP: bool = true;
 const DEFAULT_PLAY_SOUND: bool = true;
 const DEFAULT_SHOW_NOTIFICATION: bool = true;
+const DEFAULT_TURN_OFF_MONITORS: bool = false;
 
 #[derive(Debug)]
 pub struct Config {
@@ -21,19 +22,18 @@ pub struct Config {
     pub show_popup: bool,
     pub play_sound: bool,
     pub show_notification: bool,
+    pub turn_off_monitors: bool,
 }
 
-fn read_configuration(
-    config: &mut Config,
-    mut loaded_config: File,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut content = String::new();
-    loaded_config.read_to_string(&mut content)?;
-    println!("Read this content from config: '{content}'");
-
+fn read_configuration(config: &mut Config, content: String) {
     let re = Regex::new(r"break_interval=(\d+)(s|m)?").unwrap();
     if let Some(c) = re.captures(&content) {
-        let mut num = c.get(1).unwrap().as_str().parse::<u64>()?;
+        let mut num = c
+            .get(1)
+            .unwrap()
+            .as_str()
+            .parse::<u64>()
+            .expect("Unexpected casting error");
         if c.get(2).is_some_and(|m| m.as_str() == "m") {
             num = num * 60;
         }
@@ -42,7 +42,12 @@ fn read_configuration(
 
     let re = Regex::new(r"break_duration=(\d+)(s|m)?").unwrap();
     if let Some(c) = re.captures(&content) {
-        let mut num = c.get(1).unwrap().as_str().parse::<u64>()?;
+        let mut num = c
+            .get(1)
+            .unwrap()
+            .as_str()
+            .parse::<u64>()
+            .expect("Unexpected casting error");
         if c.get(2).is_some_and(|m| m.as_str() == "m") {
             num = num * 60;
         }
@@ -67,7 +72,11 @@ fn read_configuration(
         config.show_notification = value;
     };
 
-    Ok(())
+    let re = Regex::new(r"turn_off_monitors=(true|false)").unwrap();
+    if let Some(c) = re.captures(&content) {
+        let value = c.get(1).unwrap().as_str() == "true";
+        config.turn_off_monitors = value;
+    };
 }
 
 pub fn load_configuration() -> Result<Config, Box<dyn std::error::Error>> {
@@ -77,10 +86,11 @@ pub fn load_configuration() -> Result<Config, Box<dyn std::error::Error>> {
         show_popup: DEFAULT_SHOW_POPUP,
         play_sound: DEFAULT_PLAY_SOUND,
         show_notification: DEFAULT_SHOW_NOTIFICATION,
+        turn_off_monitors: DEFAULT_TURN_OFF_MONITORS,
     };
 
-    match File::open("/etc/".to_string() + CONFIG_PATH) {
-        Ok(c) => read_configuration(&mut config, c)?,
+    match fs::read_to_string("/etc/".to_string() + CONFIG_PATH) {
+        Ok(content) => read_configuration(&mut config, content),
         Err(err) if err.kind() == ErrorKind::NotFound => {}
         // do nothing, just means that there is nothing configured on system level
         Err(_) => panic!("Other error!"),
@@ -97,8 +107,8 @@ pub fn load_configuration() -> Result<Config, Box<dyn std::error::Error>> {
         }
     };
 
-    match File::open(config_home + "/" + CONFIG_PATH) {
-        Ok(c) => read_configuration(&mut config, c)?,
+    match fs::read_to_string(config_home + "/" + CONFIG_PATH) {
+        Ok(content) => read_configuration(&mut config, content),
         Err(err) if err.kind() == ErrorKind::NotFound => {}
         // do nothing, just means that there is nothing configured on user level
         Err(_) => panic!("Other error!"),
